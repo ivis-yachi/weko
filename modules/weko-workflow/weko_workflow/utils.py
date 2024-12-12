@@ -2690,7 +2690,7 @@ def set_mail_info(item_info, activity_detail, guest_user=False):
     mail_info = dict(
         university_institution=item_info.get('subitem_university/institution'),
         fullname=item_info.get('subitem_fullname'),
-        activity_id=activity_detail.activity_id,
+        activity_id=activity_id,
         mail_address=mail_address,
         dataset_requested=item_info.get('subitem_dataset_usage'),
         register_date=register_date,
@@ -2704,14 +2704,14 @@ def set_mail_info(item_info, activity_detail, guest_user=False):
         advisor_mail_address=item_info.get('subitem_advisor_mail_address'),
         guarantor_mail_address=item_info.get('subitem_guarantor_mail_address'),
         register_user_mail=register_user,
-        report_number=activity_detail.activity_id,
-        output_report_activity_id=activity_detail.activity_id,
+        report_number=activity_id,
+        output_report_activity_id=activity_id,
         output_report_title=item_info.get('subitem_title'),
         # Restricted data newly supported
         restricted_fullname=item_info.get('subitem_fullname'),
         restricted_university_institution=item_info.get(
             'subitem_university/institution'),
-        restricted_activity_id=activity_detail.activity_id,
+        restricted_activity_id=activity_id,
         restricted_research_title=_get_restricted_research_title(),
         restricted_data_name=_get_restricted_data_name(),
         restricted_application_date=item_info.get(
@@ -2732,7 +2732,7 @@ def set_mail_info(item_info, activity_detail, guest_user=False):
         mail_recipient=item_info.get('subitem_mail_address'),
         restricted_supervisor='',
         restricted_reference='',
-        restricted_usage_activity_id=activity_detail.activity_id,
+        restricted_usage_activity_id=activity_id,
         landing_url='',
         restricted_research_plan = item_info.get(
             'subitem_restricted_access_research_plan')
@@ -3890,7 +3890,7 @@ def process_send_mail(mail_info, mail_id):
     """
     if not mail_info.get("mail_recipient"):
         current_app.logger.error('Mail address is not defined')
-        return
+        return False
 
     mail_data = get_mail_data(mail_id)
 
@@ -3903,7 +3903,7 @@ def process_send_mail(mail_info, mail_id):
         recipients.extend([mail_info.get('mail_recipient')])
         mail_data['mail_body'] = body
         mail_data['mail_recipients'] = recipients
-        send_mail(mail_data)
+        return send_mail(mail_data)
 
 
 def process_send_mail_tpl(mail_info, mail_pattern_name):

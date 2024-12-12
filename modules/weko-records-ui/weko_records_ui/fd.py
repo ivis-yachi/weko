@@ -20,6 +20,7 @@
 
 """Utilities for download file."""
 
+import base64
 import hashlib
 import mimetypes
 import os
@@ -28,7 +29,7 @@ import shutil
 import string
 import tempfile
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import abort, current_app, render_template, request, redirect, send_file, url_for
 from flask_babelex import gettext as _
@@ -53,15 +54,15 @@ from weko_workflow.utils import is_terms_of_use_only
 from werkzeug.datastructures import Headers
 from werkzeug.urls import url_quote
 
-from .models import FileOnetimeDownload, FileSecretDownload, PDFCoverPageSettings
+from .models import AccessStatus, FileOnetimeDownload, FileSecretDownload, FileUrlDownloadLog, PDFCoverPageSettings, UrlType
 from .pdf import make_combined_pdf
 from .permissions import check_file_download_permission, check_original_pdf_download_permission, \
     file_permission_factory, is_owners_or_superusers
-from .utils import check_and_send_usage_report, get_billing_file_download_permission, \
+from .utils import check_and_send_usage_report, generate_secret_hash, get_billing_file_download_permission, \
     get_groups_price, get_min_price_billing_file_download, \
-    get_onetime_download, get_secret_download, is_billing_item, parse_one_time_download_token, parse_secret_download_token, \
-    update_onetime_download, update_secret_download, validate_download_record, \
-    validate_onetime_download_token, validate_secret_download_token
+    get_onetime_download, is_billing_item, is_secret_file, is_secret_url_feature_enabled, parse_one_time_download_token, \
+    update_onetime_download, validate_download_record, \
+    validate_onetime_download_token
 
 
 def weko_view_method(pid, record, template=None, **kwargs):
@@ -577,68 +578,163 @@ def _is_terms_of_use_only(file_obj:dict , req :dict) -> bool:
     
     return is_terms_of_use_only(workflow_id) if workflow_id != "" else False
 
-def file_download_secret(pid, record, _record_file_factory=None, **kwargs):
-    """File download secret.
 
-    :param pid:
-    :param record: Record json
-    :param _record_file_factory:
-    :param kwargs:
-    :return:
+def download_by_secret_url(pid, record, filename, **kwargs):
+    """Download a file using a secret URL.
+
+    Args:
+        pid (PersistentIdentifier): The identifier for the item.
+        record (WekoRecord): The record metadata of the item.
+        filename (str): The name of the file to download.
+
+    Returns:
+        Response: The Flask wrapper object for the file download.
+
     """
-    token = request.args.get('token', type=str)
-    filename:str = str(kwargs.get("filename"))
-    error_template = "weko_theme/error.html"
-    # Parse token
-    error, token_data = \
-        parse_secret_download_token(token)
-    if error:
-        return render_template(error_template, error=error)
-    record_id, id, date, secret_token = token_data
 
-    # Validate record status
+    def error_response(error_message, status_code=400):
+        error_template = "weko_theme/error.html"
+        return render_template(error_template, error_message), status_code
+    def validate_token(token):
+        try:
+            bytes = base64.urlsafe_b64decode(token.encode())
+            hash, secret_url_id = bytes.split(b'_')
+            url_obj = FileSecretDownload.get_by_id(secret_url_id.decode())
+            if url_obj and hash == generate_secret_hash(url_obj):
+                return True
+            else:
+                return False
+        except:
+            return False
+    def parse_token_into_obj(token):
+        bytes = base64.urlsafe_b64decode(token.encode())
+        url_obj_id = bytes.split(b'_')[1].decode()
+        url_obj = FileSecretDownload.get_by_id(url_obj_id)
+        return url_obj
+
     validate_download_record(record)
+    if not is_secret_url_feature_enabled() or \
+       not is_secret_file(record, filename):
+        return 'This download link is currently not available.', 403
+    token = request.args.get('token', type=str)
+    default_err_msg = 'Invalid token.'
+    if not validate_token(token):
+        return error_response(default_err_msg)
+    url_obj = parse_token_into_obj(token)
 
-    # Get secret download record.
-    secret_download :FileSecretDownload = get_secret_download(
-        file_name=filename, record_id=pid.pid_value, id=id , created=date
-    )
+    # Check if the URL is available
+    if url_obj.is_deleted is True:
+        return error_response(
+            'This download link has been deleted.', 403)
+    if url_obj.download_count >= url_obj.download_limit:
+        return error_response(
+            'The download limit has been exceeded.', 403)
+    limit_date = url_obj.expiration_date.replace(tzinfo=timezone.utc)
+    if limit_date < datetime.now(timezone.utc):
+        return error_response(
+            'The expiration date for download has been exceeded.', 403)
 
-    if not secret_download:
-        abort(403)
-
-    # Validate token
-    is_valid, error = validate_secret_download_token(
-        secret_download, filename, pid.pid_value, id,
-        secret_download.created.isoformat(), secret_token)
-    if not is_valid:
-        return render_template(error_template, error=error)
-    _record_file_factory = _record_file_factory or record_file_factory
-
-    # Get file object
-    file_object = _record_file_factory(pid, record, filename)
-    if not file_object or not file_object.obj:
-        return render_template(error_template,
-                                error="{} does not exist.".format(filename))
-
-    # Create updated data
-    update_data = dict(
-        file_name=filename, record_id=record_id, id=id, created=date,
-        download_count=secret_download.download_count - 1
-    )
-
-    # Update download data
-    if not update_secret_download(**update_data):
-        return render_template(error_template,
-                                error=_("Unexpected error occurred."))
-
-    # Get user's language and defautl language for PDF coverpage.
+    # Get the file object
+    file_object = record_file_factory(pid, record, filename)
     lang = 'en'
     if current_user.is_authenticated :
         user_profile = UserProfile.get_by_userid(current_user.get_id())
-        lang = user_profile.language if user_profile and user_profile.language \
-            else 'en'
-    return _download_file(file_object, False, lang, file_object.obj, pid, record)
+        lang = user_profile.language if user_profile else 'en'
+    file = _download_file(
+        file_object, False, lang, file_object.obj, pid, record)
+
+    # Save download info to the log table
+    file_data = []
+    for content in record.get_file_data():
+        if content.get('filename') == filename:
+            file_data = content
+            break
+    if not file_data:
+        return False
+    if file_data.get('accessrole') == "open_no":
+        access_status = AccessStatus.OPEN_NO
+    elif file_data.get('accessrole') == "open_date":
+        access_status = AccessStatus.OPEN_DATE
+    dl_log = FileUrlDownloadLog.create(
+        url_type=UrlType.SECRET,
+        secret_url_id=url_obj.id.decode(),
+        onetime_url_id=None,
+        ip_address=request.remote_addr,
+        access_status=access_status,
+        used_token=token
+    )
+    if not dl_log:
+        return error_response('Failed to save the download log', 500)
+
+    # Update the URL record
+    url_obj.download_count += 1
+    url_obj.update(download_count=url_obj.download_count)
+
+    return file
+
+
+# def file_download_secret(pid, record, _record_file_factory=None, **kwargs):
+#     """File download secret.
+
+#     :param pid:
+#     :param record: Record json
+#     :param _record_file_factory:
+#     :param kwargs:
+#     :return:
+#     """
+#     token = request.args.get('token', type=str)
+#     filename:str = str(kwargs.get("filename"))
+#     error_template = "weko_theme/error.html"
+#     # Parse token
+#     error, token_data = \
+#         parse_secret_download_token(token)
+#     if error:
+#         return render_template(error_template, error=error)
+#     record_id, id, date, secret_token = token_data
+
+#     # Validate record status
+#     validate_download_record(record)
+
+#     # Get secret download record.
+#     secret_download :FileSecretDownload = get_secret_download(
+#         file_name=filename, record_id=pid.pid_value, id=id , created=date
+#     )
+
+#     if not secret_download:
+#         abort(403)
+
+#     # Validate token
+#     is_valid, error = validate_secret_download_token(
+#         secret_download, filename, pid.pid_value, id,
+#         secret_download.created.isoformat(), secret_token)
+#     if not is_valid:
+#         return render_template(error_template, error=error)
+#     _record_file_factory = _record_file_factory or record_file_factory
+
+#     # Get file object
+#     file_object = _record_file_factory(pid, record, filename)
+#     if not file_object or not file_object.obj:
+#         return render_template(error_template,
+#                                 error="{} does not exist.".format(filename))
+
+#     # Create updated data
+#     update_data = dict(
+#         file_name=filename, record_id=record_id, id=id, created=date,
+#         download_count=secret_download.download_count - 1
+#     )
+
+#     # Update download data
+#     if not update_secret_download(**update_data):
+#         return render_template(error_template,
+#                                 error=_("Unexpected error occurred."))
+
+#     # Get user's language and defautl language for PDF coverpage.
+#     lang = 'en'
+#     if current_user.is_authenticated :
+#         user_profile = UserProfile.get_by_userid(current_user.get_id())
+#         lang = user_profile.language if user_profile and user_profile.language \
+#             else 'en'
+#     return _download_file(file_object, False, lang, file_object.obj, pid, record)
 
 
 def file_list_ui(record, files):

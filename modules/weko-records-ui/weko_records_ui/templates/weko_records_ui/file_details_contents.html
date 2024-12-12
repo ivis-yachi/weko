@@ -167,6 +167,46 @@
                 </tbody>
               </table>
             </div>
+
+            <div id="secret_url_section" style="display: none;">
+              {%- for file in files | sort(attribute='key') if file.key == filename -%} <!-- Does this even need to be a loop ?-->
+                {%- set img = file.mimetype | get_image_src -%}
+                {%- set file_url = url_for('invenio_records_ui.recid_files', pid_value=pid.pid_value,
+                filename=file.key) %}
+                {%- set is_billing_file = False -%}
+                {%- set billing_file_data = "" -%}
+                {%- set billing_file_url = "" -%}
+                {%- set billing_file_class = "" -%}
+                {%- if billing_files_permission -%}
+                  {%- set billing_file_permission = billing_files_permission.get(file.filename) -%}
+                  {%- set is_billing_file = True -%}
+                  {%- set billing_file_class = " billing-file" -%}
+                  {%- set file_url = "javascript:void(0);" -%}
+                  {%- set access_permission = record | check_file_permission(file.info()) -%}
+                {%- endif %}
+                <form id="secret_url_form">
+                  <label>Link Name</label>
+                  <input type="text" id="link_name">
+                  <label>URL Expiry Date</label>
+                  <input type="date" id="expiration_date">
+                  <label>Download Limit</label>
+                  <input type="number" id="download_limit">
+                  <label for="send_email">Send Email</label>
+                  <input type="checkbox" id="send_email">
+                  <button type="submit" id="create_secret_url" url="{{url_for('invenio_records_ui.recid_secret_url',filename=file.filename, pid_value=pid.pid_value)}}">
+                    Create Secret URL
+                  </button>
+                </form>
+              {%- endfor -%}
+            </div>
+            <style>
+              #secret_url_section {
+                border: 1px solid #ccc;
+                margin-bottom: 20px;
+                padding: 15px 5px;
+              }
+            </style>
+
             <div class="table-responsive">
               {% from "weko_records_ui/output_detail_data.html" import output_attribute_value_mlt %}
               {%- set display_file_info = record.display_file_info -%}

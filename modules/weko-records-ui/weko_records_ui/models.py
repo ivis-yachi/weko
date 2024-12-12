@@ -22,14 +22,15 @@
 """Database models for weko-admin."""
 
 from datetime import datetime
+import enum
 import traceback
 from typing import List
 
 from flask import current_app
 from invenio_db import db
-from sqlalchemy import desc, func
+from sqlalchemy import CheckConstraint, desc, func
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.dialects.postgresql import INTERVAL
+from sqlalchemy.dialects.postgresql import INET, INTERVAL
 from sqlalchemy.sql.functions import concat ,now
 from sqlalchemy_utils.models import Timestamp
 from sqlalchemy_utils.types import JSONType
@@ -291,61 +292,70 @@ class FilePermission(db.Model):
 
 
 class FileOnetimeDownload(db.Model, Timestamp):
-    """File onetime download."""
+    """A model class for the 'file_onetime_download' table.
 
-    __tablename__ = 'file_onetime_download'
+    This class stores information about one-time URLs used for file access.
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    """Identifier"""
+    Note:
+        Despite being called 'one-time', the download limit can be set to more
+        than once.
 
-    file_name = db.Column(db.String(255), nullable=False)
-    """File name"""
+    Attributes:
+        id (int): The unique identifier of the record.
+        approver_id (int): The ID of the user who approved the application.
+        record_id (str): The ID of the associated file record.
+        file_name (str): The name of the file.
+        expiration_date (datetime): The date and time when the URL expires.
+        download_limit (int): The maximum number of downloads allowed.
+        download_count (int): The number of times the URL has been downloaded.
+        user_mail (str): The email address of the user who applied.
+        is_guest (bool): Indicates whether the user is a guest.
+        is_deleted (bool): Indicates whether the record is deleted.
+        extra_info (dict): Additional information stored in JSON format.
+            Example: {"key": "value"}.
+    """
+    __tablename__   = 'file_onetime_download'
 
-    user_mail = db.Column(db.String(255), nullable=False)
-    """User mail"""
-
-    record_id = db.Column(db.String(255), nullable=False)
-    """Record identifier."""
-
-    download_count = db.Column(db.Integer, nullable=False, default=0)
-    """Download count"""
-
-    expiration_date = db.Column(db.Integer, nullable=False, default=0)
-    """Expiration Date"""
-
-    extra_info = db.Column(
-        db.JSON().with_variant(
-            postgresql.JSONB(none_as_null=True),
-            'postgresql',
-        ).with_variant(
-            JSONType(),
-            'sqlite',
-        ).with_variant(
-            JSONType(),
-            'mysql',
-        ),
+    id              = db.Column(db.Integer,primary_key=True,autoincrement=True)
+    approver_id     = db.Column(db.Integer, nullable=False)
+    record_id       = db.Column(db.String(255), nullable=False)
+    file_name       = db.Column(db.String(255), nullable=False)
+    expiration_date = db.Column(db.DateTime, nullable=False)
+    download_limit  = db.Column(db.Integer, nullable=False)
+    download_count  = db.Column(db.Integer, nullable=False, default=0)
+    user_mail       = db.Column(db.String(255), nullable=False)
+    is_guest        = db.Column(db.Boolean, nullable=False, default=False)
+    is_deleted      = db.Column(db.Boolean, nullable=False, default=False)
+    extra_info      = db.Column(db.JSON()
+        .with_variant(postgresql.JSONB(none_as_null=True), 'postgresql')
+        .with_variant(JSONType(), 'sqlite')
+        .with_variant(JSONType(), 'mysql'),
         default=lambda: dict(),
-        nullable=True
+        nullable=True,
     )
-    """Extra info."""
 
-    def __init__(self, file_name, user_mail, record_id, download_count=0,
-                 expiration_date=0, extra_info=None):
-        """Init.
+    def __init__(self, approver_id, record_id, file_name, expiration_date,
+                 download_limit, user_mail, is_guest, extra_info):
+        """Initialize the instance.
 
-        :param file_name: File name
-        :param user_mail: User mail
-        :param record_id: Record identifier
-        :param download_count: Download count
-        :param expiration_date: Expiration date
-        :param extra_info: Extra info want to store
+        Args:
+            approver_id (int): The ID of the user who approved the application.
+            record_id (str): The ID of the file's associated record.
+            file_name (str): The name of the file.
+            expiration_date (datetime): The date and time when the URL expires.
+            download_limit (int): The download limit of the URL.
+            user_mail (str): The email address of the user who applied.
+            is_guest (bool): A flag indicating whether the user is a guest.
+            extra_info (dict): Additional information stored in JSON format.
         """
-        self.file_name = file_name
-        self.user_mail = user_mail
-        self.record_id = record_id
-        self.download_count = download_count
+        self.approver_id     = approver_id
+        self.record_id       = record_id
+        self.file_name       = file_name
         self.expiration_date = expiration_date
-        self.extra_info = extra_info
+        self.download_limit  = download_limit
+        self.user_mail       = user_mail
+        self.is_guest        = is_guest
+        self.extra_info      = extra_info
 
     @classmethod
     def create(cls, **data):
@@ -422,43 +432,55 @@ class FileOnetimeDownload(db.Model, Timestamp):
 
 
 class FileSecretDownload(db.Model, Timestamp):
-    """File secret download."""
+    """A model class for file secret download.
 
+    This class stores information about secret URLs used for file access.
+
+    Attributes:
+        id (int): The identifier of the record.
+        creator_id (int): The ID of the user who issued the secret URL.
+        record_id (str): The ID of the record that has the file.
+        file_name (str): The name of the file.
+        label_name (str): The label of the secret URL.
+        expiration_date (datetime): The date and time when the URL expires.
+        download_limit (int): The download limit of the URL.
+        download_count (int): The number of times the URL has been downloaded.
+        is_deleted (bool): A flag indicating whether the record is deleted.
+    """
     __tablename__ = 'file_secret_download'
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    """Identifier"""
+    id              = db.Column(db.Integer,primary_key=True,autoincrement=True)
+    creator_id      = db.Column(db.Integer,
+                                db.ForeignKey(
+                                    'accounts_user.id',
+                                    name='fk_file_secret_download_creator_id'),
+                                nullable=False)
+    record_id       = db.Column(db.String(255), nullable=False)
+    file_name       = db.Column(db.String(255), nullable=False)
+    label_name      = db.Column(db.String(255), nullable=False)
+    expiration_date = db.Column(db.DateTime, nullable=False)
+    download_limit  = db.Column(db.Integer, nullable=False)
+    download_count  = db.Column(db.Integer, nullable=False, default=0)
+    is_deleted      = db.Column(db.Boolean, nullable=False, default=False)
 
-    file_name = db.Column(db.String(255), nullable=False)
-    """File name"""
+    def __init__(self, creator_id, record_id, file_name, label_name,
+                 expiration_date, download_limit):
+        """Initialize the instance.
 
-    user_mail = db.Column(db.String(255), nullable=False)
-    """User mail"""
-
-    record_id = db.Column(db.String(255), nullable=False)
-    """Record identifier."""
-
-    download_count = db.Column(db.Integer, nullable=False, default=0)
-    """Download count"""
-
-    expiration_date = db.Column(db.Integer, nullable=False, default=0)
-    """Expiration Date"""
-
-    def __init__(self, file_name, user_mail, record_id, download_count=0,
-                 expiration_date=0):
-        """Init.
-
-        :param file_name: File name
-        :param user_mail: User mail
-        :param record_id: Record identifier
-        :param download_count: Download count
-        :param expiration_date: Expiration date
+        Args:
+            creator_id (int): The ID of the user who issued the secret URL.
+            record_id (str): The ID of the record that has the file.
+            file_name (str): The name of the file.
+            label_name (str): The label of the secret URL.
+            expiration_date (datetime): The date and time when the URL expires.
+            download_limit (int): The download limit of the URL.
         """
-        self.file_name = file_name
-        self.user_mail = user_mail
+        self.creator_id = creator_id
         self.record_id = record_id
-        self.download_count = download_count
+        self.file_name = file_name
+        self.label_name = label_name
         self.expiration_date = expiration_date
+        self.download_limit = download_limit
 
     @classmethod
     def create(cls, **data):
@@ -469,6 +491,25 @@ class FileSecretDownload(db.Model, Timestamp):
             db.session.commit()
             db.session.flush()
             return file_download
+        except Exception as ex:
+            db.session.rollback()
+            current_app.logger.error(ex)
+            raise ex
+
+    def update(self, **data):
+        """Update FileSecretDownload object.
+
+        Args:
+            data (dict): The data to update.
+
+        Returns:
+            FileSecretDownload: The updated object.
+        """
+        try:
+            for key, value in data.items():
+                setattr(self, key, value)
+            db.session.commit()
+            return self
         except Exception as ex:
             db.session.rollback()
             current_app.logger.error(ex)
@@ -517,6 +558,112 @@ class FileSecretDownload(db.Model, Timestamp):
         )
         return query.order_by(desc(cls.id)).all()
 
+    @classmethod
+    def get_by_id(cls, obj_id):
+        """Retrieve an object by its ID.
+
+        Args:
+            obj_id (int): The ID of the object to retrieve.
+
+        Returns:
+            cls: The object with the specified ID, or None if not found.
+        """
+        obj = cls.query.filter_by(id=obj_id).first()
+        return obj
+
+
+class UrlType(enum.Enum):
+    """An ENUM data type for the used URL type."""
+    SECRET = 'SECRET'
+    ONETIME = 'ONETIME'
+
+
+class AccessStatus(enum.Enum):
+    """An ENUM data type for the access status of the downloaded file."""
+    OPEN_NO = 'OPEN_NO'
+    OPEN_DATE = 'OPEN_DATE'
+    OPEN_RESTRICTED = 'OPEN_RESTRICTED'
+
+
+class FileUrlDownloadLog(db.Model, Timestamp):
+    """A model class for the table 'file_url_download_log.'
+
+    This class is used to store the information of the executed download of the
+    file using either secret URL or onetime URL.
+
+    Attributes:
+        id (int): The identifier of the record.
+        url_type (UrlType): The used URL type.
+        secret_url_id (int): The secret URL record ID.
+        onetime_url_id (int): The onetime URL record ID.
+        ip_address (str): The IP address of the downloader.
+        access_status (AccessStatus): The access status of the downloaded file.
+        used_token (str): The URL token used to access the file.
+    """
+
+    __tablename__ = 'file_url_download_log'
+    __table_args__ = (
+        CheckConstraint(
+            "("
+            "(url_type = 'SECRET' AND secret_url_id IS NOT NULL AND "
+            "onetime_url_id IS NULL) OR "
+            "(url_type = 'ONETIME' AND onetime_url_id IS NOT NULL AND "
+            "secret_url_id IS NULL)"
+            ")",
+            name="chk_url_type",
+        ),
+    )
+
+    id = db.Column(db.Integer(), primary_key=True, autoincrement=True)
+    url_type = db.Column(db.Enum(UrlType), nullable=False)
+    secret_url_id = db.Column(
+        db.Integer(), db.ForeignKey(FileSecretDownload.id))
+    onetime_url_id = db.Column(
+        db.Integer(), db.ForeignKey(FileOnetimeDownload.id))
+    ip_address = db.Column(INET()
+        .with_variant(db.String(255), 'sqlite')
+        .with_variant(db.String(255), 'mysql'))
+    access_status = db.Column(db.Enum(AccessStatus), nullable=False)
+    used_token = db.Column(db.String(255), nullable=False)
+
+    def __init__(self, url_type, secret_url_id, onetime_url_id, ip_address,
+                 access_status, used_token):
+        """Initializes the instance.
+        
+        Args:
+            url_type (UrlType): The used URL type.
+            secret_url_id (int): The secret URL record ID.
+            onetime_url_id (int): The onetime URL record ID.
+            ip_address (str): The IP address of the downloader.
+            access_status (AccessStatus): The status of the downloaded file.
+            used_token (str): The URL token used to access the file.
+        """
+        self.url_type = url_type
+        self.secret_url_id = secret_url_id
+        self.onetime_url_id = onetime_url_id
+        self.ip_address = ip_address
+        self.access_status = access_status
+        self.used_token = used_token
+
+    @classmethod
+    def create(cls, **data):
+        """Create a new record.
+        
+        Args:
+            data (dict): The data to create the record.
+        
+        Returns:
+            FileUrlDownloadLog: The created record.
+        """
+        try:
+            dl_log = cls(**data)
+            db.session.add(dl_log)
+            db.session.commit()
+            return dl_log
+        except Exception as ex:
+            db.session.rollback()
+            current_app.logger.error(ex)
+            return None
 
 class RocrateMapping(db.Model, Timestamp):
     """Represent a mapping from metadata to ro-crate.
@@ -566,4 +713,11 @@ class RocrateMapping(db.Model, Timestamp):
         self.mapping = mapping
 
 
-__all__ = ('PDFCoverPageSettings', 'FilePermission', 'FileOnetimeDownload' ,'FileSecretDownload', 'RocrateMapping')
+__all__ = (
+    'PDFCoverPageSettings',
+    'FilePermission',
+    'FileOnetimeDownload',
+    'FileSecretDownload',
+    'FileUrlDownloadLog'
+    'RocrateMapping'
+)

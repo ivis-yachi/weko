@@ -255,3 +255,32 @@ def test_update_download2(app,db):
                 assert False
             except:
                 assert before == FileSecretDownload.query.filter_by().one_or_none().download_count
+
+
+class TestFileOnetimeDownload:
+    # .tox/c1/bin/pytest --cov=weko_records_ui tests/test_models.py::TestFileOnetimeDownload::test_init -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp -p no:warnings
+    def test_init(self, db):
+        assert FileOnetimeDownload.query.count() == 0
+        obj = FileOnetimeDownload(
+            approver_id=1,
+            record_id='1',
+            file_name='test',
+            expiration_date=datetime.strptime('2024-12-31', '%Y-%m-%d'),
+            download_limit = 1,
+            user_mail = 'test@example.org',
+            is_guest=False,
+            extra_info=dict()
+        )
+        db.session.add(obj)
+        db.session.commit()
+        assert FileOnetimeDownload.query.count() == 1
+        record = FileOnetimeDownload.query.filter_by(id=obj.id).first()
+        assert record.approver_id == 1
+        assert record.record_id == '1'
+        assert record.file_name == 'test'
+        assert record.expiration_date == \
+            datetime.strptime('2024-12-31', '%Y-%m-%d')
+        assert record.download_limit == 1
+        assert record.user_mail == 'test@example.org'
+        assert record.is_guest == False
+        assert record.extra_info == dict()

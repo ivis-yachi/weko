@@ -187,7 +187,7 @@ RECORDS_UI_ENDPOINTS = dict(
     recid_secret_url=dict(
         pid_type='recid',
         route='/records/<pid_value>/secret/<path:filename>',
-        view_imp='weko_records_ui.views.create_secret_url_and_send_mail',
+        view_imp='weko_records_ui.views.issue_secret_url',
         record_class='weko_deposit.api:WekoRecord',
         permission_factory_imp='weko_records_ui.permissions'
                                ':page_permission_factory',
@@ -196,7 +196,7 @@ RECORDS_UI_ENDPOINTS = dict(
     recid_secret_file_download=dict(
         pid_type='recid',
         route='/record/<pid_value>/file/secret/<string:filename>',
-        view_imp='weko_records_ui.fd.file_download_secret',
+        view_imp='weko_records_ui.fd.download_by_secret_url',
         record_class='weko_deposit.api:WekoRecord',
     ),
 )

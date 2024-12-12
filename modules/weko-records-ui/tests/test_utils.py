@@ -33,10 +33,6 @@ from weko_records_ui.utils import (
     get_google_detaset_meta,
     get_google_scholar_meta,
     create_secret_url,
-    parse_secret_download_token,
-    validate_secret_download_token,
-    get_secret_download,
-    update_secret_download,
     get_valid_onetime_download,
     display_oaiset_path,
     get_terms,
@@ -898,102 +894,6 @@ def test_create_secret_url(app,db,users,records):
         assert return_dict["secret_url"] != ""
         assert return_dict["mail_recipient"] == user_mail
 
-
-# def parse_secret_download_token(token: str) -> Tuple[str, Tuple]:
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_utils.py::test_parse_secret_download_token -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
-def test_parse_secret_download_token(app ,db):
-    #64
-    assert parse_secret_download_token(None) == (_("Token is invalid."),())
-    assert parse_secret_download_token("") == (_("Token is invalid."),())
-    #65
-    assert parse_secret_download_token("random_string sajfosijdfasodfjv") == (_("Token is invalid."),())
-
-
-    # 66
-    # invalid args pattern
-    assert parse_secret_download_token("MSA1IDIwMjMtMDMtMDggMDA6NTI6MTkuNjI0NTUyIDZGQTdEMzIxQTk0OTU1MEQ=") == (_("Token is invalid."),())
-
-    # 67
-    # valid args pattern
-    error, res = parse_secret_download_token("MSA1IDIwMjMtMDMtMDhUMDA6NTI6MTkuNjI0NTUyIDZGQTdEMzIxQTk0OTU1MEQ=")
-    assert not error
-    assert res == ('1', '5', '2023-03-08T00:52:19.624552', '6FA7D321A949550D')
-
-# def validate_secret_download_token(
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_utils.py::test_validate_secret_download_token -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
-def test_validate_secret_download_token(app):
-
-    with app.test_request_context():
-        secret_download=FileSecretDownload(
-            file_name= "eee.txt", record_id= '1',user_mail="repoadmin@example.org",expiration_date=999999,download_count=10
-        )
-        secret_download.created = datetime(2023,3,8,0,52,19,624552)
-        secret_download.id = 5
-        # 68
-        res = validate_secret_download_token(secret_download=None , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-
-        #69
-        res = validate_secret_download_token(secret_download=secret_download , file_name= "aaa.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-        res = validate_secret_download_token(secret_download=secret_download , file_name= "eee.txt", record_id= '5', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-        res = validate_secret_download_token(secret_download=secret_download , file_name= "eee.txt", record_id= '1', id= '1', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-        res = validate_secret_download_token(secret_download=secret_download , file_name= "eee.txt", record_id= '1', id= '5', date= '2099-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-        res = validate_secret_download_token(secret_download=secret_download , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '7FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-
-        # 70
-        secret_download2=FileSecretDownload(
-            file_name= "eee.txt", record_id= '5',user_mail="repoadmin@example.org",expiration_date=-1,download_count=10
-        )
-        secret_download2.created = datetime(2023,3,8,0,52,19,624552)
-        secret_download2.id = 5
-        res = validate_secret_download_token(secret_download=secret_download2 , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("The expiration date for download has been exceeded."))
-        
-        #71
-        secret_download2.expiration_date = 99999999
-        res = validate_secret_download_token(secret_download=secret_download2 , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (True ,"")
-        
-        # 72
-        secret_download2.expiration_date = 9999999
-        secret_download2.download_count = 0
-        res = validate_secret_download_token(secret_download=secret_download2 , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("The download limit has been exceeded."))
-
-        # 73
-        res = validate_secret_download_token(secret_download=secret_download , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (True ,"")
-
-        secret_download2.expiration_date = "hoge"
-        res = validate_secret_download_token(secret_download=secret_download2 , file_name= "eee.txt", record_id= '1', id= '5', date= '2023-03-08 00:52:19.624552', token= '6FA7D321A949550D')
-        assert res == (False , _("Token is invalid."))
-
-# def get_secret_download(file_name: str, record_id: str,
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_utils.py::test_get_secret_download -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
-def test_get_secret_download(app ,db ):
-    with app.test_request_context():
-        with db.session.begin_nested():
-            secret_download=FileSecretDownload(
-                file_name= "eee.txt", record_id= '1',user_mail="repoadmin@example.org",expiration_date=999999,download_count=10
-            )
-            db.session.add(secret_download)
-        
-
-        
-        assert get_secret_download(file_name= secret_download.file_name
-                            , record_id= secret_download.record_id
-                            , id= secret_download.id 
-                            , created =secret_download.created)
-        
-        assert not get_secret_download(file_name= secret_download.file_name
-                            , record_id= secret_download.record_id
-                            , id= secret_download.id + 1
-                            , created =secret_download.created)
 
 # def update_secret_download(**kwargs) -> Optional[List[FileSecretDownload]]:
 # .tox/c1/bin/pytest --cov=weko_records_ui tests/test_utils.py::test_get_data_usage_application_data -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp

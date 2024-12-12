@@ -350,23 +350,39 @@ require([
     }
   });
 
-  $('#secret_url')?.on('click', function(){
-    const webelement = $('#secret_url');
-    if (webelement){
+  $("#secret_url").click(function() {
+    $("#secret_url_section").toggle();
+  });
+
+  $('#create_secret_url')?.on('click', function(event) {
+    event.preventDefault(); // フォームのデフォルトの送信を防ぐ
+    const webelement = $('#create_secret_url');
+    if (webelement) {
       const url = webelement.attr('url');
-      webelement.prop('disabled' ,true);
+      const linkName = $('#link_name').val();
+      const expirationDate = $('#expiration_date').val();
+      const downloadLimit = $('#download_limit').val();
+      const sendEmail = $('#send_email').is(':checked');
+      webelement.prop('disabled', true);
       $.ajax({
         url: url,
         method: 'POST',
         contentType: 'application/json',
-        data: null,
-        success: function (responce) {
-          webelement.prop('disabled',false);
-          alert(responce);
+        dataType: 'json',
+        data: JSON.stringify({
+          link_name: linkName,
+          expiration_date: expirationDate,
+          download_limit: downloadLimit,
+          send_email: sendEmail
+        }),
+        success: function(response) {
+          webelement.prop('disabled', false);
+          // JSONレスポンスの 'message' フィールドを表示
+          alert(response.message || "Success!");
         },
-        error: function (jqXHE, status ,msg) {
-          webelement.prop('disabled',false);
-          alert(msg);
+        error: function(jqXHR, status, msg) {
+          webelement.prop('disabled', false);
+          alert("Error: " + (jqXHR.responseJSON?.message || msg));
         }
       });
     }

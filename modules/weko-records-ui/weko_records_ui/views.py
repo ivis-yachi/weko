@@ -20,7 +20,9 @@
 
 """Blueprint for weko-records-ui."""
 
+import base64
 from datetime import datetime
+import hashlib
 import re
 import os
 import uuid
@@ -69,14 +71,14 @@ from weko_records_ui.utils import check_items_settings, get_file_info_list
 from weko_workflow.utils import extract_term_description, get_item_info, process_send_mail, set_mail_info, is_terms_of_use_only
 
 from .ipaddr import check_site_license_permission
-from .models import FilePermission, PDFCoverPageSettings
+from .models import FilePermission, FileSecretDownload, PDFCoverPageSettings
 from .permissions import check_content_clickable, check_created_id, \
     check_file_download_permission, check_original_pdf_download_permission, \
     check_permission_period, file_permission_factory, get_permission
-from .utils import create_secret_url, get_billing_file_download_permission, \
+from .utils import can_manage_secret_url, get_billing_file_download_permission, \
     get_google_detaset_meta, get_google_scholar_meta, get_groups_price, \
     get_min_price_billing_file_download, get_record_permalink, hide_by_email, \
-    delete_version
+    delete_version, send_secret_url_mail
 from .utils import restore as restore_imp
 from .utils import soft_delete as soft_delete_imp
 
@@ -386,6 +388,7 @@ def default_view_method(pid, record, filename=None, template=None, **kwargs):
     :param kwargs: Additional view arguments based on URL rule.
     :returns: The rendered template.
     """
+    current_app.logger.error('default_view_method called')
     def _get_rights_title(result, rights_key_str, rights_values, current_lang, meta_options):
         """Get multi-lang rights title."""
         for rights_key in rights_key_str.split(','):
@@ -772,7 +775,7 @@ def default_view_method(pid, record, filename=None, template=None, **kwargs):
         flg_display_itemtype = current_app.config.get('WEKO_RECORDS_UI_DISPLAY_ITEM_TYPE') ,
         flg_display_resourcetype = current_app.config.get('WEKO_RECORDS_UI_DISPLAY_RESOURCE_TYPE') ,
         search_author_flg=search_author_flg,
-        show_secret_URL=_get_show_secret_url_button(record,filename),
+        show_secret_URL=can_manage_secret_url(record,filename),
         mailcheckflag = mailcheckflag,
         onetime_file_url = onetime_file_url,
         onetime_file_name = onetime_file_name,
@@ -783,97 +786,55 @@ def default_view_method(pid, record, filename=None, template=None, **kwargs):
     )
 
 
-def create_secret_url_and_send_mail(pid:PersistentIdentifier, record:WekoRecord, filename:str, **kwargs) -> str:
-    """on click button 'Secret URL' 
-    generate secret URL and send mail.
-    about entrypoint settings, see at .config RECORDS_UI_ENDPOINTS.recid_secret_url
-    
+def issue_secret_url(pid, record, filename, **kwargs):
+    """Issue a new secret URL for a file in a record.
+
     Args:
-        pid: PID object.
-        record: Record object.
-        filename: File name.
+        pid (PersistentIdentifier): The identifier for the item.
+        record (WekoRecord): The record metadata of the item.
+        filename (str): The file name to download.
 
     Returns:
-        result status and message text.
-    """
-    current_app.logger.info("pid:" + pid.pid_value)
-    current_app.logger.info("record:" + str(record.id))
-    current_app.logger.info("filename:" + filename)
+        dict: A success message confirming the URL generation and email
+        delivery, if applicable.
 
-    #permission check
-    # "Someone who can show Secret URL button" can also use generate Secret URL function.
-    if not _get_show_secret_url_button(record ,filename):
+    """
+    def validate_input(request):
+        if not request:
+            abort(400)
+
+
+    if not can_manage_secret_url(record, filename):
         abort(403)
 
-    userprof:UserProfile = UserProfile.get_by_userid(current_user.id)
-    restricted_fullname = userprof._displayname or '' if userprof else ''
-    restricted_data_name = record.get('item_title','')
+    request = request.json
+    is_validated = validate_input(request)
+    if not is_validated:
+        abort(400)
+    else:
+        secret_url_obj = FileSecretDownload.create(
+            creator_id      = current_user.id,
+            record_id       = pid.pid_value,
+            file_name       = filename,
+            label_name      = request.json['link_name'],
+            expiration_date = request.json['expiration_date'],
+            download_limit  = request.json['download_limit']
+        )
 
-    #generate url and regist db(FileSecretDownload)
-    result = create_secret_url(pid.pid_value,filename,current_user.email , restricted_fullname , restricted_data_name)
-    
-    # set mail infomation
-    mail_info = set_mail_info(get_item_info(pid.object_uuid), type("" ,(object,),dict(activity_id = '')))
-    mail_info.update(result)
-    
-    # query secret mail template record
-    secret_genre_id = current_app.config.get('WEKO_RECORDS_UI_MAIL_TEMPLATE_SECRET_GENRE_ID', -1)
-    secret_genre = MailTemplateGenres.query.get(secret_genre_id)
-    secret_mail_template = None
-    if secret_genre:
-        secret_mail_template = next(iter(secret_genre.templates or []), None)
+    # Send an email with the URL if requested
+    success_msg = 'Secret URL generated successfully.'
+    if request.json['send_email']:
+        is_succeeded = send_secret_url_mail(
+            pid.object_uuid, secret_url_obj, record.get('item_title', ''))
+        if is_succeeded:
+            return jsonify({
+                'message': success_msg + '\\nPlease check your email inbox.'})
+        else:
+            return jsonify({
+                'message': success_msg + 'But failed to send an email.'})
+    else:
+        return jsonify({"message": success_msg})
 
-    #send mail
-    if secret_mail_template:
-        send_result = process_send_mail(mail_info, secret_mail_template.id)
-        if send_result:
-            return _('Success Secret URL Generate')
-
-    abort(500)
-
-def _get_show_secret_url_button(record : WekoRecord, filename :str) -> bool:
-    """ 
-        Args:
-            WekoRecord : records_metadata for target item
-            str : target content name
-        Returns:
-            bool : return true if be able to show Secret URL button. or false.
-    """
-
-    #1.check secret url function is enabled
-    restricted_access = AdminSettings.get('restricted_access', False)
-    if not restricted_access:
-        restricted_access = current_app.config[
-            'WEKO_ADMIN_RESTRICTED_ACCESS_SETTINGS']
-        
-    enable:bool = restricted_access.get('secret_URL_file_download',{}).get('secret_enable',False)
-
-    #2.check the user has permittion
-    has_parmission = False
-    # Registered user
-    user_id_list = [int(record['owner'])] if record.get('owner') else []
-    if current_user and current_user.is_authenticated and \
-        current_user.id in user_id_list:
-        has_parmission = True
-    # Super users
-    supers = current_app.config['WEKO_PERMISSION_SUPER_ROLE_USER'] 
-    for role in list(current_user.roles or []):
-        if role.name in supers:
-            has_parmission = True
-
-    #3.check the file's accessrole is "open_no" ,or "open_date" and not open yet.
-    is_secret_file = False
-    current_app.logger.info(record.get_file_data())
-    for content in record.get_file_data():
-        if content.get('filename') == filename:
-            if content.get('accessrole') == "open_no":
-                is_secret_file = True
-            elif content.get('accessrole') == "open_date" and \
-                datetime.now() < datetime.strptime(content.get('date',[{"dateValue" :'1970-01-01'}])[0].get("dateValue" ,'1970-01-01'), '%Y-%m-%d')  :
-                is_secret_file = True
-
-    # all true is show
-    return enable and has_parmission and is_secret_file
 
 @blueprint.route('/r/<parent_pid_value>', methods=['GET'])
 @blueprint.route('/r/<parent_pid_value>.<int:version>', methods=['GET'])

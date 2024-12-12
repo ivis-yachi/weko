@@ -14,7 +14,6 @@ from weko_workflow.models import (
 )
 from weko_records_ui.models import PDFCoverPageSettings, FilePermission
 from weko_records_ui.views import (
-    _get_show_secret_url_button,
     check_permission,
     citation,
     escape_newline,
@@ -37,6 +36,7 @@ from weko_records_ui.views import (
     get_workflow_detail,
     preview_able,
 )
+from weko_records_ui.utils import can_manage_secret_url
 
 # .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
 
@@ -1030,7 +1030,7 @@ def test_create_secret_url_and_send_mail(app,client,db,users,records,db_restrict
                                 ,pid_value=results[1]["recid"].pid_value
                                 ,filename=results[1]["filename"])
     login_user_via_session(client=client, user=users[id]["obj"] ,email=users[id]["email"])
-    with patch('weko_records_ui.views._get_show_secret_url_button',return_value = True):
+    with patch('weko_records_ui.views.can_manage_secret_url',return_value = True):
         with patch('weko_records_ui.views.process_send_mail',return_value = True):
             # with app.test_request_context():
             #W2023-22-2 TestNo.7
@@ -1046,7 +1046,7 @@ def test_create_secret_url_and_send_mail(app,client,db,users,records,db_restrict
                 assert res.status_code == 500
 
     #W2023-22-2 TestNo.6
-    with patch('weko_records_ui.views._get_show_secret_url_button',return_value = False):
+    with patch('weko_records_ui.views.can_manage_secret_url',return_value = False):
         with patch('weko_records_ui.views.process_send_mail',return_value = True):
             with patch("flask.templating._render", return_value=""):
                 res = client.post(secret_file_url ,data=json.dumps({}), content_type='application/json')
@@ -1063,7 +1063,7 @@ def test_create_secret_url_and_send_mail_2(app,client,db,users,records,db_restri
                                 ,pid_value=results[1]["recid"].pid_value
                                 ,filename=results[1]["filename"])
     login_user_via_session(client=client, user=users[id]["obj"] ,email=users[id]["email"])
-    with patch('weko_records_ui.views._get_show_secret_url_button',return_value = True):
+    with patch('weko_records_ui.views.can_manage_secret_url',return_value = True):
         #W2023-22-2 TestNo.5
             with patch('weko_records_ui.views.process_send_mail',return_value = False):
                 with patch("flask.templating._render", return_value=""):
@@ -1071,7 +1071,7 @@ def test_create_secret_url_and_send_mail_2(app,client,db,users,records,db_restri
                     assert res.status_code == 500
 
 # def create_secret_url_and_send_mail(pid:PersistentIdentifier, record:WekoRecord, filename:str, **kwargs) -> str:
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py::test__get_show_secret_url_button -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
+# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py::test_can_manage_secret_url -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
 @pytest.mark.parametrize(
     "id, is_show",
     [
@@ -1085,7 +1085,7 @@ def test_create_secret_url_and_send_mail_2(app,client,db,users,records,db_restri
         (7, False), #user (weko_shared owner)
     ],
 )
-def test__get_show_secret_url_button(users, records, db_restricted_access_secret, id, is_show):
+def test_can_manage_secret_url(users, records, db_restricted_access_secret, id, is_show):
     indexer, results = records
     # 80
     i = 0
@@ -1103,21 +1103,21 @@ def test__get_show_secret_url_button(users, records, db_restricted_access_secret
         res = []
         for record in results:
             if 'filename' in record:
-                res.append( _get_show_secret_url_button(record["record"] , record["filename"]) )
+                res.append( can_manage_secret_url(record["record"] , record["filename"]) )
         
     assert not res[0]
     assert res[1] == is_show
     assert res[2] == is_show
 
 # def create_secret_url_and_send_mail(pid:PersistentIdentifier, record:WekoRecord, filename:str, **kwargs) -> str:
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py::test__get_show_secret_url_button2 -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
+# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py::test_can_manage_secret_url2 -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
 @pytest.mark.parametrize(
     "id, is_show",
     [
         (1, True), #repoadmin
     ],
 )
-def test__get_show_secret_url_button2(users,records ,id,is_show):
+def test_can_manage_secret_url2(users,records ,id,is_show):
     indexer, results = records
     # 80
     # pattern of not db_restricted_access_secret 
@@ -1135,21 +1135,21 @@ def test__get_show_secret_url_button2(users,records ,id,is_show):
         res = []
         for record in results:
             if 'filename' in record:
-                res.append( _get_show_secret_url_button(record["record"] , record["filename"]) )
+                res.append( can_manage_secret_url(record["record"] , record["filename"]) )
     
     assert res[0] == False
     assert res[1] == False
     assert res[2] == False
 
 # def create_secret_url_and_send_mail(pid:PersistentIdentifier, record:WekoRecord, filename:str, **kwargs) -> str:
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py::test__get_show_secret_url_button3 -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
+# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_views.py::test_can_manage_secret_url3 -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
 @pytest.mark.parametrize(
     "id, is_show",
     [
         (1, True), #repoadmin
     ],
 )
-def test__get_show_secret_url_button3(users, records, db_restricted_access_secret, id, is_show):
+def test_can_manage_secret_url3(users, records, db_restricted_access_secret, id, is_show):
     indexer, results = records
     # 80
     i = 0
@@ -1166,7 +1166,7 @@ def test__get_show_secret_url_button3(users, records, db_restricted_access_secre
         res = []
         for record in results:
             if 'filename' in record:
-                res.append( _get_show_secret_url_button(record["record"] , record["filename"]) )
+                res.append( can_manage_secret_url(record["record"] , record["filename"]) )
     
     assert res[0] == False
     assert res[1] == is_show

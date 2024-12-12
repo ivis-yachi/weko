@@ -22,9 +22,10 @@
 
 import base64
 import csv
+import hashlib
 import json
 import re
-from datetime import datetime as dt
+from datetime import date, datetime as dt
 from datetime import timedelta
 from decimal import Decimal
 from typing import List, Optional, Tuple
@@ -41,6 +42,7 @@ from invenio_accounts.models import Role, User
 from invenio_cache import current_cache
 from invenio_db import db
 from invenio_i18n.ext import current_i18n
+from invenio_mail.models import MailTemplateGenres
 from invenio_oaiserver.response import getrecord
 from invenio_pidrelations.contrib.versioning import PIDVersioning
 from invenio_pidstore.models import PersistentIdentifier, PIDStatus
@@ -54,10 +56,11 @@ from weko_records.api import FeedbackMailList, RequestMailList, ItemTypes
 from weko_records.utils import replace_fqdn
 from weko_records.models import ItemReference
 from weko_schema_ui.models import PublishStatus
+from weko_user_profiles.models import UserProfile
 from weko_workflow.api import WorkActivity, WorkFlow, UpdateItem
 from weko_workflow.models import ActivityStatusPolicy
-
 from weko_records_ui.models import InstitutionName
+from weko_workflow.utils import get_item_info, process_send_mail, set_mail_info
 
 from .models import FileOnetimeDownload, FilePermission, FileSecretDownload
 from .permissions import check_create_usage_report, \
@@ -1694,225 +1697,190 @@ def get_google_detaset_meta(record,record_tree=None):
 
     return json.dumps(res_data, ensure_ascii=False)
 
-def create_secret_url(record_id:str ,file_name:str ,user_mail:str ,restricted_fullname='',restricted_data_name='') -> dict:
-    """
-    Save in FileSecretDownload
-    and Generate Secret Download URL.
-    
-    Args:
-        str :record_id:
-        str :file_name:
-        str :user_mail
-        str :restricted_fullname  :embed mail string
-        str :restricted_data_name :embed mail string
-    Return: 
-        dict: created info 
-    """
-    # Save to Database.
-    secret_obj:FileSecretDownload = _create_secret_download_url(
-        file_name, record_id, user_mail)
-    
-    # generate url
-    secret_file_url = _generate_secret_download_url(
-        file_name, record_id, secret_obj.id, secret_obj.created)
 
-    return_dict: dict = {
-        "secret_url": secret_file_url,
-        "mail_recipient": secret_obj.user_mail,
-        "file_name": file_name,
-        "restricted_expiration_date": "",
-        "restricted_expiration_date_ja": "",
-        "restricted_expiration_date_en": "",
-        "restricted_download_count": "",
-        "restricted_download_count_ja": "",
-        "restricted_download_count_en": "",
-        "restricted_fullname": restricted_fullname,
-        "restricted_data_name": restricted_data_name,
-    }
+def is_secret_url_feature_enabled() -> bool:
+    """Check if the feature is enabled.
 
-    max_int :int = current_app.config["WEKO_ADMIN_RESTRICTED_ACCESS_MAX_INTEGER"]
-    if secret_obj.expiration_date < max_int:
-        expiration_date = timedelta(days=secret_obj.expiration_date)
-        expiration_date = dt.today() + expiration_date
-        expiration_date = expiration_date.strftime("%Y-%m-%d")
-        return_dict['restricted_expiration_date'] = expiration_date
-    else:
-        return_dict["restricted_expiration_date_ja"] = "無制限"
-        return_dict["restricted_expiration_date_en"] = "Unlimited"
-            
-
-    if secret_obj.download_count < max_int :
-        return_dict["restricted_download_count"] = str(secret_obj.download_count)
-    else:
-        return_dict["restricted_download_count_ja"] = "無制限"
-        return_dict["restricted_download_count_en"] = "Unlimited"
-            
-    return return_dict
-
-
-def _generate_secret_download_url(file_name: str, record_id: str, id: str ,created :dt) -> str:
-    """Generate Secret download URL.
-    
-    Args
-        str: file_name: File name
-        str: record_id: File Version ID
-        str: id: FileSecretDownload id
-        datetime :created :FileSecretDownload created
-    
-    Returns
-        str: generated url
-    """    
-    secret_key = current_app.config['WEKO_RECORDS_UI_SECRET_KEY']
-    download_pattern = current_app.config[
-        'WEKO_RECORDS_UI_SECRET_DOWNLOAD_PATTERN']
-    current_date = created
-    hash_value = download_pattern.format(file_name, record_id, id,
-                                         current_date.isoformat())
-    secret_token = oracle10.hash(secret_key, hash_value)
-
-    token_pattern = "{} {} {} {}"
-    token = token_pattern.format(record_id, id, current_date.isoformat(),
-                                 secret_token)
-    token_value = base64.b64encode(token.encode()).decode()
-    host_name = request.host_url
-    url = "{}record/{}/file/secret/{}?token={}" \
-        .format(host_name, record_id, file_name, token_value)
-    return url
-
-
-def parse_secret_download_token(token: str) -> Tuple[str, Tuple]:
-    """Parse secret download token.
-
-    Args
-        token:
-    Returns: 
-        str   : error message
-        Tuple : (record_id, id, date, secret_token)
-    """
-    # current_app.logger.debug("token:{}".format(token))
-    error = _("Token is invalid.")
-    if token is None:
-        return error, ()
-    try:
-        decode_token = base64.b64decode(token.encode()).decode()
-        current_app.logger.debug("decode_token:{}".format(decode_token))
-        param = decode_token.split(" ")
-        if not param or len(param) != 4:
-            return error, ()
-
-        return "", (param[0], param[1], param[2], param[3]) #record_id, id, current_date, secret_token
-    except Exception as err:
-        current_app.logger.error(err)
-        return error, ()
-
-
-def validate_secret_download_token(
-    secret_download: FileSecretDownload , file_name: str, record_id: str,
-    id: str, date: str, token: str
-) -> Tuple[bool, str]:
-    """Validate secret download token.
-
-    Args
-        FileSecretDownload:secret_download:
-        str:file_name:
-        str:record_id:
-        str:id:
-        str:date:
-        str:token:
-    Returns 
-        Tuple:
-            bool : is valid 
-            str  : error message
-    """
-    token_invalid = _("Token is invalid.")
-    secret_key = current_app.config['WEKO_RECORDS_UI_SECRET_KEY']
-    download_pattern = current_app.config[
-        'WEKO_RECORDS_UI_SECRET_DOWNLOAD_PATTERN']
-    hash_value = download_pattern.format(
-        file_name, record_id, id, date)
-
-    if not oracle10.verify(secret_key, token, hash_value):
-        current_app.logger.error('Validate token error: {}'.format(hash_value))
-        return False, token_invalid
-    try:
-        if not secret_download:
-            return False, token_invalid
-        try:
-            expiration_date = timedelta(secret_download.expiration_date)
-            download_date = secret_download.created.date() + expiration_date
-            current_date = dt.utcnow().date()
-            if current_date > download_date:
-                return False, _(
-                    "The expiration date for download has been exceeded.")
-        except OverflowError:
-            # in case of "Unlimited"
-            current_app.logger.debug('date value out of range:'+
-                                    str(secret_download.expiration_date))
-
-        if secret_download.download_count <= 0:
-            return False, _("The download limit has been exceeded.")
-        return True, ""
-    except Exception as err:
-        current_app.logger.error('Validate secret download token error:')
-        current_app.logger.error(err)
-        return False, token_invalid
-        
-def get_secret_download(file_name: str, record_id: str,
-                        id: str , created :dt ) -> Optional[FileSecretDownload]:
-    """Get secret download count.
-
-    Args :
-        str:file_name
-        str:record_id
-        str:id
-        dt :created
-    @return:
-        FileSecretDownload or None
-    """
-    file_downloads = FileSecretDownload.find(
-        file_name=file_name, record_id=record_id, id=id ,created=created
-    )
-    if file_downloads and len(file_downloads) == 1:
-        return file_downloads[0]
-    else:
-        return None
-
-def _create_secret_download_url(file_name: str, record_id: str, user_mail: str) -> FileSecretDownload:
-    """Create secret download.
-
-    Args:
-        str : file_name:
-        str : record_id:
-        str : user_mail:
     Returns:
-        FileSecretDownload : inserted record
+        bool: True if the feature is enabled, otherwise False.
+
     """
-    secret_url_file_download:dict = get_restricted_access('secret_URL_file_download')
-        
-    expiration_date = secret_url_file_download.get("secret_expiration_date")
-    download_limit = secret_url_file_download.get("secret_download_limit")
-
-    file_secret = FileSecretDownload.create(**{
-        "file_name": file_name,
-        "record_id": record_id,
-        "user_mail": user_mail,
-        "expiration_date": expiration_date,
-        "download_count": download_limit,
-    })
-    return file_secret
-    
+    restricted_access_settings = AdminSettings.get(
+        'restricted_access', dict_to_object=False)
+    if not restricted_access_settings:
+        current_app.config['WEKO_ADMIN_RESTRICTED_ACCESS_SETTINGS']
+    is_enabled = restricted_access_settings.get(
+        'secret_URL_file_download', {}).get('secret_enable', False)
+    return is_enabled
 
 
-def update_secret_download(**kwargs) -> Optional[List[FileSecretDownload]]:
-    """Update secret download.
+def has_permission_to_manage_secret_url(record: WekoRecord, user_id: int) -> bool:
+    """Check if the user has permission to manage the secret URL feature.
 
-    Args
-        kwargs:
-    Returns
-        updated List[FileSecretDownload] or None
+    Following users have it.
+    - The administrators.
+    - The user who registered the item(record).
+    - The user who registered the item on behalf of other users.
+
+    Returns:
+        bool: True if the user has permission, otherwise False.
+
     """
-    current_app.logger.debug("update_secret_download:{}".format(kwargs))
-    return FileSecretDownload.update_download(**kwargs)
+    super_roles = current_app.config['WEKO_PERMISSION_SUPER_ROLE_USER']
+    user = User.query.filter_by(id=user_id).first()
+    has_permission = (
+        user_id == int(record['owner']) or
+        user_id in record['_deposit']['weko_shared_ids'] or
+        any(role.name in super_roles for role in user.roles or [])
+    )
+    return has_permission
+
+
+def is_secret_file(record: WekoRecord, filename: str) -> bool:
+    """Check if the target file meets the requirements.
+
+    Args:
+        record (WekoRecord): The record object.
+        filename (str): The target file name.
+
+    Returns:
+        bool: True if the file is secret, otherwise False.
+
+    """
+    file_data = []
+    for content in record.get_file_data():
+        if content.get('filename') == filename:
+            file_data = content
+            break
+    if not file_data:
+        return False
+
+    publish_date = dt.strptime(
+        file_data.get('date')[0].get('dateValue'), '%Y-%m-%d'
+    )
+    is_secret_file = (
+        file_data.get('accessrole') == 'open_no' or (
+            file_data.get('accessrole') == 'open_date' and
+            dt.now < publish_date
+        )
+    )
+    return is_secret_file
+
+
+def can_manage_secret_url(record: WekoRecord, filename: str) -> bool:
+    """Check if the user can manage the secret URL feature.
+
+    This function checks following conditions:
+    - The secret URL feature is enabled.
+    - The logged-in user has permission to use the feature.
+    - The target file meets the requirements to be used with the feature.
+
+    Args:
+        record (WekoRecord): The record object.
+        filename (str): The target file name.
+
+    Returns:
+        bool: True if the user can use the feature, otherwise False.
+
+    """
+    if not current_user or not current_user.is_authenticated:
+        return False
+    else:
+        result = (
+            is_secret_url_feature_enabled() and
+            has_permission_to_manage_secret_url(record, current_user.id) and
+            is_secret_file(record, filename)
+        )
+        return result
+
+
+def generate_secret_hash(secret_url_obj):
+    """Generate a SHA-256 hash value from a FileSecretDownload object.
+
+    Note:
+        Same object always generates the same value, so it can be used both
+        for creating a new hash and verifying it.
+
+    Args:
+        secret_url_obj (FileSecretDownload): The secret URL object.
+
+    Returns:
+        bytes: The SHA-256 hash value.
+
+    """
+    secret_key = current_app.config['WEKO_RECORDS_UI_SECRET_KEY']
+    token_parts = [
+        secret_key,
+        str(secret_url_obj.created),
+        str(secret_url_obj.creator_id),
+        str(secret_url_obj.record_id),
+        str(secret_url_obj.file_name),
+        str(secret_url_obj.label_name)
+    ]
+    hash_obj = hashlib.sha256()
+    for part in token_parts:
+        hash_obj.update(part.encode())
+    return hash_obj.digest()
+
+
+def create_secret_url(secret_url_obj):
+    """Create a secret URL from a FileSecretDownload object.
+
+    Note:
+        Same URL is generated from a same object.
+
+    Args:
+        secret_url_obj (FileSecretDownload): The secret URL object.
+
+    Returns:
+        str: The generated secret URL.
+
+    """
+    hash = generate_secret_hash(secret_url_obj)
+    bytes = hash + b'_' + str(secret_url_obj.id).encode()
+    token = base64.urlsafe_b64encode(bytes).decode()
+    host_url = request.host_url
+    secret_url = (
+        f'{host_url}record/{secret_url_obj.record_id}/file/secret/'
+        f'{secret_url_obj.file_name}?token={token}'
+    )
+    return secret_url
+
+
+def send_secret_url_mail(uuid, secret_url_obj, item_title):
+    """Send an email with a secret URL.
+
+    Args:
+        uuid (UUID): The UUID of the item.
+        secret_url_obj (FileSecretDownload): The secret URL object.
+        item_title (str): The item title.
+
+    Returns:
+        bool: True if the email sent successfully, otherwise False.
+
+    """
+    # Setup mail info
+    user_profile = UserProfile.get_by_userid(current_user.id)
+    fullname = user_profile._displayname if user_profile else ''
+    secret_url_info = {
+        'secret_url': create_secret_url(secret_url_obj),
+        'mail_recipient': current_user.email,
+        'file_name': secret_url_obj.file_name,
+        'restricted_expiration_date': str(secret_url_obj.expiration_date),
+        'restricted_download_count': str(secret_url_obj.download_limit),
+        'restricted_fullname': fullname,
+        'restricted_data_name': item_title,
+    }
+    mail_info = set_mail_info(get_item_info(uuid), None)
+    mail_info.update(secret_url_info)
+
+    # Send a mail with the exclusive mail-template
+    secret_genre_id = current_app.config.get(
+        'WEKO_RECORDS_UI_MAIL_TEMPLATE_SECRET_GENRE_ID', -1)
+    secret_genre = MailTemplateGenres.query.get(secret_genre_id)
+    secret_mail_template = next(iter(secret_genre.templates or []), None)
+    is_succeeded = process_send_mail(mail_info, secret_mail_template.id)
+    return is_succeeded
 
 
 class RoCrateConverter:

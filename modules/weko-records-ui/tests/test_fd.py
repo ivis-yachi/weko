@@ -2,7 +2,7 @@
 
 from weko_deposit.api import WekoFileObject
 from weko_records_ui.errors import AvailableFilesNotFoundRESTError
-from weko_records_ui.fd import _is_terms_of_use_only, file_download_secret, prepare_response,file_download_onetime,_download_file,add_signals_info,weko_view_method,file_ui,file_preview_ui,file_download_ui,file_list_ui
+from weko_records_ui.fd import _is_terms_of_use_only, prepare_response,file_download_onetime,_download_file,add_signals_info,weko_view_method,file_ui,file_preview_ui,file_download_ui,file_list_ui
 from weko_records_ui.config import WEKO_RECORDS_UI_DETAIL_TEMPLATE
 from unittest.mock import MagicMock
 from invenio_theme.config import THEME_ERROR_TEMPLATE 
@@ -478,54 +478,6 @@ def test__is_terms_of_use_only(app, records_restricted, users, db_file_permissio
         #Contributer
         with patch("flask_login.utils._get_user", return_value=users[0]["obj"]):
             assert not _is_terms_of_use_only(provide_not,{'terms_of_use_only': True})
-
-# def file_download_secret(pid, record, _record_file_factory=None, **kwargs):
-# .tox/c1/bin/pytest --cov=weko_records_ui tests/test_fd.py::test_file_download_secret -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
-def test_file_download_secret(app,db, itemtypes, users, records):
-    indexer, results = records
-    recid = results[1]["recid"]
-    record = results[1]["record"]
-
-    # token:str = re.sub("^.+?token=" ,"" , urls[0])
-    with app.test_request_context("?token=MSA1IDIwMjMtMDMtMDggMDA6NTI6MTkuNjI0NTUyIDZGQTdEMzIxQTk0OTU1MEQ="):
-        p = FileSecretDownload.create(file_name="helloworld.docx", record_id=recid.pid_value, user_mail=users[0]["email"] ,download_count = 1)
-        factory = MagicMock()
-        factory.obj = {"":""}
-        with patch("flask_login.utils._get_user", return_value=users[1]["obj"]):
-            with patch("weko_records_ui.fd.render_template", side_effect=lambda x,error: (x,error)): #return param
-                with patch("weko_records_ui.fd._download_file", return_value="_download_file"):
-                    with patch("weko_records_ui.fd.parse_secret_download_token", return_value=( "parse_secret_download_token",("token"))):
-                        #28
-                        assert file_download_secret(recid,record,record_file_factory) == ('weko_theme/error.html', "parse_secret_download_token")
-                    with patch("weko_records_ui.fd.parse_secret_download_token", return_value=(False , (results[1]["recid"].pid_value,1,p.created,""))):
-                        with patch("weko_records_ui.fd.validate_download_record", return_value=None):
-                            with patch("weko_records_ui.fd.validate_secret_download_token", return_value=(False , "validate_secret_download_token")):
-                                # 29
-                                assert file_download_secret(recid,record,record_file_factory,filename="helloworld.docx")==('weko_theme/error.html' , "validate_secret_download_token")
-                            with patch("weko_records_ui.fd.validate_secret_download_token", return_value=(True , "")):
-                                with patch("weko_records_ui.fd.record_file_factory", return_value=""):
-                                    # 30
-                                    assert file_download_secret(recid,record,record_file_factory=lambda x ,y ,z: "",filename="helloworld.docx")==('weko_theme/error.html' , "{} does not exist.".format(results[1]["filename"]))
-                                with patch("weko_records_ui.fd.record_file_factory", return_value=factory):
-                                    with patch("weko_records_ui.fd.get_secret_download", return_value=p):
-                                        with patch("weko_records_ui.fd.update_secret_download", return_value=None):
-                                            assert file_download_secret(results[0]["recid"],results[0]["record"],record_file_factory=None,filename="helloworld.docx")==('weko_theme/error.html' , "Unexpected error occurred.")
-                                        #31
-                                        assert file_download_secret(recid,record,record_file_factory,filename="helloworld.docx")=="_download_file"
-                                        assert db.session.query(FileSecretDownload).one_or_none().download_count == 0
-                                    with patch("weko_records_ui.fd.get_secret_download", return_value=None):
-                                        with pytest.raises(Forbidden):
-                                            file_download_secret(recid,record,record_file_factory,filename="helloworld.docx")
-        with patch("weko_records_ui.fd.render_template", side_effect=lambda x,error: (x,error)): #return param
-            with patch("weko_records_ui.fd.parse_secret_download_token", return_value=(False , (results[1]["recid"].pid_value,1,p.created,""))):
-                with patch("weko_records_ui.fd.validate_secret_download_token", return_value=(True , "")):
-                    with patch("weko_records_ui.fd._download_file", return_value="_download_file"):
-                        with patch("weko_records_ui.fd.record_file_factory", return_value=factory):
-                            with patch("weko_records_ui.fd.get_secret_download", return_value=p):
-                                assert file_download_secret(recid,record,record_file_factory,filename="helloworld.docx")=="_download_file"
-
-                    with patch("weko_records_ui.fd.record_file_factory", return_value=False):
-                        assert file_download_onetime(recid,record,record_file_factory)==('weko_theme/error.html', 'Token is invalid.')
 
 
 # .tox/c1/bin/pytest --cov=weko_records_ui tests/test_fd.py::test_file_list_ui -vv -s --cov-branch --cov-report=term --basetemp=/code/modules/weko-records-ui/.tox/c1/tmp
